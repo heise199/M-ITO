@@ -1,69 +1,112 @@
 """
-求解模块 - 求解线性方程组
+求解器 (Solver) - 有限元方程求解
+从 MATLAB 代码转换
 """
+
 import numpy as np
 from scipy.sparse.linalg import spsolve
 
 
 def solving(CtrPts, DBoudary, Dofs, K, F, BoundCon):
     """
-    求解线性方程组
+    求解有限元方程 KU = F
     
     参数:
-        CtrPts: 控制点信息
-        DBoudary: 边界条件信息
-        Dofs: 自由度信息
-        K: 全局刚度矩阵
+        CtrPts: 控制点信息字典
+                - Num: 控制点总数
+        DBoudary: Dirichlet 边界条件字典
+        Dofs: 自由度信息字典
+              - Num: 总自由度数
+        K: 刚度矩阵
         F: 载荷向量
-        BoundCon: 边界条件类型
+        BoundCon: 边界条件类型 (1-5)
     
     返回:
         U: 位移向量
-    """
-    # MATLAB代码中索引从1开始，Python需要转换为0-based
-    # MATLAB: U_fixeddofs = DBoudary.CtrPtsOrd; (MATLAB索引，1-based)
-    # MATLAB: V_fixeddofs = DBoudary.CtrPtsOrd + CtrPts.Num; (MATLAB索引，1-based)
     
+    改编自 MATLAB IgaTop2D 代码
+    """
     if BoundCon in [1, 4, 5]:
-        # MATLAB索引转换为Python索引（减1，因为MATLAB从1开始）
-        U_fixeddofs = np.atleast_1d(DBoudary['CtrPtsOrd'] - 1)  # MATLAB索引转Python索引（0-based）
-        V_fixeddofs = np.atleast_1d(DBoudary['CtrPtsOrd'] - 1 + CtrPts['Num'])  # y方向自由度（0-based）
+        U_fixeddofs = DBoudary['CtrPtsOrd']
+        V_fixeddofs = DBoudary['CtrPtsOrd'] + CtrPts['Num']
     elif BoundCon in [2, 3]:
-        U_fixeddofs = np.atleast_1d(DBoudary['CtrPtsOrd1'] - 1)  # MATLAB索引转Python索引（0-based）
-        V_fixeddofs = np.array([
-            DBoudary['CtrPtsOrd1'] - 1 + CtrPts['Num'],
-            DBoudary['CtrPtsOrd2'] - 1 + CtrPts['Num']
-        ])
+        # 确保是数组
+        U_fixeddofs = np.atleast_1d(DBoudary['CtrPtsOrd1'])
+        V_fixeddofs = np.concatenate([
+            np.atleast_1d(DBoudary['CtrPtsOrd1']),
+            np.atleast_1d(DBoudary['CtrPtsOrd2'])
+        ]) + CtrPts['Num']
+    
+    # 转换为0-based索引
+    U_fixeddofs_0 = U_fixeddofs - 1
+    V_fixeddofs_0 = V_fixeddofs - 1
     
     Dofs['Ufixed'] = U_fixeddofs
     Dofs['Vfixed'] = V_fixeddofs
     
-    # 确保所有数组都是1维的，然后连接
-    U_fixed = np.atleast_1d(Dofs['Ufixed'])
-    V_fixed = np.atleast_1d(Dofs['Vfixed'])
-    all_fixed = np.concatenate([U_fixed, V_fixed])
+    # 组合固定自由度
+    fixed_dofs = np.concatenate([U_fixeddofs_0, V_fixeddofs_0])
     
-    # MATLAB: Dofs.Free = setdiff(1:Dofs.Num,[Dofs.Ufixed; Dofs.Vfixed]);
-    # MATLAB中1:Dofs.Num是1-based索引[1,2,...,Dofs.Num]
-    # 转换为Python的0-based: [0,1,...,Dofs.Num-1]
-    # all_fixed已经是0-based，所以直接使用
-    Dofs['Free'] = np.setdiff1d(np.arange(Dofs['Num']), all_fixed)
+    # 自由自由度 (0-based)
+    all_dofs = np.arange(Dofs['Num'])
+    Dofs['Free'] = np.setdiff1d(all_dofs, fixed_dofs)
     
-    U = np.zeros(Dofs['Num'])
+    # 初始化位移向量
+    U = np.zeros((Dofs['Num'], 1))
     
-    # 检查刚度矩阵的条件
-    K_free = K[Dofs['Free'], :][:, Dofs['Free']]
-    if K_free.shape[0] != len(Dofs['Free']):
-        print(f"警告: 刚度矩阵维度不匹配: K_free.shape={K_free.shape}, Free长度={len(Dofs['Free'])}")
+    # 求解线性方程组
+    # 模拟 MATLAB 的 \ 运算符行为：对奇异或接近奇异的矩阵使用最小二乘求解
+    K_free = K[np.ix_(Dofs['Free'], Dofs['Free'])]
+    F_free = F[Dofs['Free']].flatten()
     
-    # 求解自由度的位移
-    try:
-        U[Dofs['Free']] = spsolve(K_free, F[Dofs['Free']])
-    except Exception as e:
-        print(f"求解失败: {e}")
-        print(f"K_free形状: {K_free.shape}, 秩: {np.linalg.matrix_rank(K_free.toarray()) if hasattr(K_free, 'toarray') else 'N/A'}")
-        print(f"Free自由度数量: {len(Dofs['Free'])}, Fixed自由度数量: {len(all_fixed)}")
-        raise
+    # 检查矩阵对角线是否有零元素（奇异矩阵的指标）
+    diag = K_free.diagonal()
+    zero_diag_count = np.sum(np.abs(diag) < 1e-12)
+    
+    if zero_diag_count > 0:
+        # 矩阵奇异或接近奇异，使用 LSQR 求解（类似 MATLAB 的 \ 行为）
+        from scipy.sparse.linalg import lsqr
+        U_free, istop, itn, r1norm, r2norm, anorm, acond, arnorm, xnorm, var = lsqr(K_free, F_free, atol=1e-12, btol=1e-12, iter_lim=10000)
+        U_free = U_free.reshape(-1, 1)
+    else:
+        # 矩阵满秩，使用标准的稀疏直接求解器
+        try:
+            U_free = spsolve(K_free, F_free).reshape(-1, 1)
+            # 检查解的有效性
+            if np.any(np.isnan(U_free)) or np.any(np.isinf(U_free)):
+                from scipy.sparse.linalg import lsqr
+                U_free, istop, itn, r1norm = lsqr(K_free, F_free, atol=1e-12, btol=1e-12)[:4]
+                U_free = U_free.reshape(-1, 1)
+        except Exception as e:
+            # 直接求解失败，使用 LSQR
+            from scipy.sparse.linalg import lsqr
+            U_free, istop, itn, r1norm = lsqr(K_free, F_free, atol=1e-12, btol=1e-12)[:4]
+            U_free = U_free.reshape(-1, 1)
+    
+    U[Dofs['Free']] = U_free
     
     return U
+
+
+# ======================================================================================================================
+# 函数: solving
+#
+# 用于等几何拓扑优化的紧凑高效 Python 实现
+#
+# 开发者: 原始 MATLAB 代码 - Jie Gao
+# Email: JieGao@hust.edu.cn
+# Python 转换: 2025
+#
+# 主要参考文献:
+#
+# (1) Jie Gao, Lin Wang, Zhen Luo, Liang Gao. IgaTop: an implementation of topology optimization for structures
+# using IGA in Matlab. Structural and multidisciplinary optimization.
+#
+# (2) Jie Gao, Liang Gao, Zhen Luo, Peigen Li. Isogeometric topology optimization for continuum structures using
+# density distribution function. Int J Numer Methods Eng, 2019, 119:991–1017
+#
+# *********************************************   免责声明   *******************************************************
+# 作者保留程序的所有权利。程序可用于学术和教育目的。作者不保证代码没有错误，
+# 并且不对因使用程序而引起的任何事件承担责任。
+# ======================================================================================================================
 

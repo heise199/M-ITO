@@ -1,183 +1,216 @@
 """
-主程序 - IGA拓扑优化2D
+IGA 2D 拓扑优化主函数
+从 MATLAB 代码转换
 """
+
 import numpy as np
+from scipy.sparse import csr_matrix
+from nurbs import nrbeval, nrbbasisfun, nrbbasisfunder
 from geom_mod import geom_mod
 from pre_iga import pre_iga
 from boun_cond import boun_cond
 from shep_fun import shep_fun
-from guadrature import guadrature
-from nrbbasisfun import nrbbasisfun
-from nrbbasisfunder import nrbbasisfunder
 from stiff_ele2d import stiff_ele2d
 from stiff_ass2d import stiff_ass2d
 from solving import solving
 from oc import oc
 from plot_data import plot_data
 from plot_topy import plot_topy
-from scipy.sparse import csr_matrix
 
 
-def iga_top2d(L, W, Order, Num, BoundCon, Vmax, penal, rmin):
+def iga_top2d(L, W, Order, Num, BoundCon, Vmax, penal, rmin, case_number=None):
     """
-    IGA拓扑优化主程序
+    基于等几何分析的 2D 拓扑优化主函数
     
     参数:
         L: 长度
         W: 宽度
-        Order: B样条阶数 [p, q]
-        Num: 控制点数量 [n, m]
+        Order: NURBS 次数提升 [Order_U, Order_V]
+        Num: 控制点数量 [Num_U, Num_V]
         BoundCon: 边界条件类型 (1-5)
         Vmax: 最大体积分数
-        penal: 惩罚参数
-        rmin: 最小过滤半径
+        penal: SIMP 惩罚因子
+        rmin: 最小半径 (平滑)
+    
+    改编自 MATLAB IgaTop2D 代码
     """
-    # 材料属性
+    print('='*60)
+    print('IGA 拓扑优化 - Python 实现')
+    print('='*60)
+    print(f'参数: L={L}, W={W}, Order={Order}, Num={Num}')
+    print(f'边界条件={BoundCon}, Vmax={Vmax}, penal={penal}, rmin={rmin}')
+    print('='*60 + '\n')
+    
+    # ========== 材料属性 ==========
     E0 = 1.0
     Emin = 1e-9
     nu = 0.3
     DH = E0 / (1 - nu**2) * np.array([[1, nu, 0], 
-                                      [nu, 1, 0], 
-                                      [0, 0, (1 - nu) / 2]])
+                                       [nu, 1, 0], 
+                                       [0, 0, (1-nu)/2]])
     
-    # 创建NURBS几何模型
+    # ========== 生成几何模型 ==========
+    print('生成几何模型...')
     NURBS = geom_mod(L, W, Order, Num, BoundCon)
     
-    # IGA预处理
+    # ========== IGA 准备 ==========
+    print('IGA 预处理...')
     CtrPts, Ele, GauPts = pre_iga(NURBS)
-    Dim = len(Order)
-    Dofs = {}
-    Dofs['Num'] = Dim * CtrPts['Num']
+    Dim = len(NURBS['order'])
+    Dofs = {'Num': Dim * CtrPts['Num']}
     
-    # 边界条件
+    print('设置边界条件...')
     DBoudary, F = boun_cond(CtrPts, BoundCon, NURBS, Dofs['Num'])
     
-    # 初始化控制设计变量
+    # ========== 初始化设计变量 ==========
+    print('初始化设计变量...')
     X = {}
-    X['CtrPts'] = np.ones(CtrPts['Num'])
+    X['CtrPts'] = np.ones((CtrPts['Num'], 1))
     
-    # 准备高斯点坐标
-    # MATLAB: GauPts.Cor = [reshape(GauPts.CorU',1,GauPts.Num); reshape(GauPts.CorV',1,GauPts.Num)];
-    # MATLAB的reshape是按列填充的，所以需要按列顺序（Fortran顺序）展开
-    # GauPts.CorU的形状是(Ele.Num, Ele.GauPtsNum)，转置后是(Ele.GauPtsNum, Ele.Num)
-    # reshape按列填充，相当于先按列读取，然后转置成行向量
+    # 准备高斯点坐标（与 MATLAB 的 reshape(A',1,...) 等价：在 NumPy 中为按 C 顺序展平原矩阵）
+    # 与 MATLAB: [reshape(CorU',1,Num); reshape(CorV',1,Num)] 完全等价
     GauPts['Cor'] = np.vstack([
-        GauPts['CorU'].T.flatten('F'),  # Fortran顺序（列优先）
-        GauPts['CorV'].T.flatten('F')   # Fortran顺序（列优先）
+        GauPts['CorU'].T.flatten(order='F'),
+        GauPts['CorV'].T.flatten(order='F')
+    ])
+    # 简要检查参数范围
+    print(f"[Debug] Param U in GauPts.Cor: [{np.min(GauPts['Cor'][0,:]):.2f}, {np.max(GauPts['Cor'][0,:]):.2f}]")
+    print(f"[Debug] Param V in GauPts.Cor: [{np.min(GauPts['Cor'][1,:]):.2f}, {np.max(GauPts['Cor'][1,:]):.2f}]")
+    
+    # 在高斯点求值 NURBS（使用理性基函数映射 R，避免散点求值路径差异）
+    # 先按参数点计算理性基函数 N 与非零基函数索引 id_vals
+    GauPts['PCor'] = None  # 占位，稍后用 R 与控制点直接计算物理坐标
+    
+    # 计算基函数
+    print('计算基函数...')
+    N, id_vals = nrbbasisfun(GauPts['Cor'], NURBS)
+    GauPts['id_vals'] = id_vals  # 保存每个高斯点对应的非零基函数编号（1-based）
+    
+    # 构建稀疏映射矩阵 R
+    R = np.zeros((GauPts['Num'], CtrPts['Num']))
+    for i in range(GauPts['Num']):
+        R[i, id_vals[i, :] - 1] = N[i, :]  # 转为 0-based 索引
+    R = csr_matrix(R)
+
+    # 用 R 与控制点坐标求高斯点物理坐标（与 MATLAB 一致，避免散点 nrbeval 差异）
+    GauPts['PCor'] = np.vstack([
+        (R @ CtrPts['Cordis'][0, :].reshape(-1, 1)).flatten(),
+        (R @ CtrPts['Cordis'][1, :].reshape(-1, 1)).flatten(),
+        np.zeros(GauPts['Num'])
     ])
     
-    # 计算高斯点的物理坐标和权重
-    GauPts['PCor'] = []
-    GauPts['Pw'] = []
-    for i in range(GauPts['Num']):
-        u_val = GauPts['Cor'][0, i]
-        v_val = GauPts['Cor'][1, i]
-        pt = NURBS.evaluate_single((u_val, v_val))
-        GauPts['PCor'].append([pt[0] / pt[3], pt[1] / pt[3], pt[2] / pt[3]])
-        GauPts['Pw'].append(pt[3])
-    
-    GauPts['PCor'] = np.array(GauPts['PCor']).T
-    
-    # 计算基函数矩阵R
-    N_list = []
-    id_list = []
-    for i in range(GauPts['Num']):
-        uv = np.array([[GauPts['Cor'][0, i]], [GauPts['Cor'][1, i]]])
-        N, id_array = nrbbasisfun(uv, NURBS)
-        N_list.append(N.flatten())
-        id_list.append(id_array.flatten())
-    
-    # 构建稀疏矩阵R
-    R_rows = []
-    R_cols = []
-    R_data = []
-    for i, (N, ids) in enumerate(zip(N_list, id_list)):
-        for j, ctrlpt_idx in enumerate(ids):
-            R_rows.append(i)
-            R_cols.append(int(ctrlpt_idx) - 1)  # 转换为0-based索引
-            R_data.append(N[j])
-    
-    R = csr_matrix((R_data, (R_rows, R_cols)), 
-                   shape=(GauPts['Num'], CtrPts['Num']))
-    
     # 计算基函数导数
-    dRu, dRv, dRu_id = nrbbasisfunder(GauPts['Cor'], NURBS)
+    print('计算基函数导数...')
+    dRu, dRv, id_dR = nrbbasisfunder(GauPts['Cor'], NURBS)
+    GauPts['id_dR'] = id_dR
     
-    # 调试信息：打印nrbbasisfunder的输出信息
-    print('=== nrbbasisfunder Debug Info ===')
-    print(f'dRu shape: {dRu.shape}, dRv shape: {dRv.shape}, dRu_id shape: {dRu_id.shape}')
-    print(f'GauPts.Num = {GauPts["Num"]}')
-    if dRu.shape[0] > 0 and dRu.shape[1] > 0:
-        print(f'dRu[0, 0:5] = {dRu[0, :min(5, dRu.shape[1])]}')
-        print(f'dRv[0, 0:5] = {dRv[0, :min(5, dRv.shape[1])]}')
-        print(f'dRu_id[0, 0:5] = {dRu_id[0, :min(5, dRu_id.shape[1])]}')
-    print('=================================\n')
+    # 调试信息（已禁用）
+    if False:
+        print('=== nrbbasisfunder Debug Info ===')
+        print(f'dRu size: [{dRu.shape[0]}, {dRu.shape[1]}]')
+        print(f'dRv size: [{dRv.shape[0]}, {dRv.shape[1]}]')
+        print(f'GauPts.Num = {GauPts["Num"]}')
+        if dRu.shape[0] > 0 and dRu.shape[1] > 0:
+            print(f'dRu[0, :5] = {dRu[0, :min(5, dRu.shape[1])]}')
+            print(f'dRv[0, :5] = {dRv[0, :min(5, dRv.shape[1])]}')
+        print('=================================\n')
     
-    # 初始化高斯点密度
-    X['GauPts'] = (R @ X['CtrPts']).flatten()
+    # 映射到高斯点
+    X['GauPts'] = R @ X['CtrPts']
     
-    # 平滑机制
+    # ========== 平滑机制 ==========
+    print('构建平滑机制...')
     Sh, Hs = shep_fun(CtrPts, rmin)
     
-    # 开始优化循环
+    # ========== 准备绘图 ==========
+    print('准备绘图数据...')
+    DenFied, Pos = plot_data(Num, NURBS)
+    
+    # ========== 优化循环 ==========
+    print('\n开始优化迭代...')
+    print('='*60)
     change = 1.0
     nloop = 150
     Data = np.zeros((nloop, 2))
     Iter_Ch = np.zeros(nloop)
     
-    # 准备绘图数据
-    DenFied, Pos = plot_data(Num, NURBS)
-    
     for loop in range(nloop):
-        # IGA评估位移响应
-        KE, dKE, dv_dg = stiff_ele2d(X, penal, Emin, DH, CtrPts, Ele, GauPts, dRu, dRv, dRu_id, NURBS)
+        # IGA 求解位移响应
+        KE, dKE, dv_dg = stiff_ele2d(X, penal, Emin, DH, CtrPts, Ele, GauPts, dRu, dRv)
         K = stiff_ass2d(KE, CtrPts, Ele, Dim, Dofs['Num'])
         U = solving(CtrPts, DBoudary, Dofs, K, F, BoundCon)
         
         # 目标函数和灵敏度分析
         J = 0.0
-        dJ_dg = np.zeros(GauPts['Num'])
+        dJ_dg = np.zeros((GauPts['Num'], 1))
         
         for ide in range(Ele['Num']):
-            Ele_NoCtPt = Ele['CtrPtsCon'][ide, :] - 1  # 转换为0-based索引
-            edof = np.concatenate([Ele_NoCtPt, Ele_NoCtPt + CtrPts['Num']])
-            Ue = U[edof.astype(int)]
-            
+            Ele_NoCtPt = Ele['CtrPtsCon'][ide, :]  # 1-based
+            edof = np.concatenate([Ele_NoCtPt - 1, Ele_NoCtPt - 1 + CtrPts['Num']])  # 转为 0-based
+            Ue = U[edof, 0]
             J += Ue.T @ KE[ide] @ Ue
             
             for i in range(Ele['GauPtsNum']):
-                GptOrder = int(GauPts['Seque'][ide, i]) - 1  # 转换为0-based索引
+                GptOrder = GauPts['Seque'][ide, i] - 1  # 转为 0-based
                 dJ_dg[GptOrder] = -Ue.T @ dKE[ide][i] @ Ue
         
         Data[loop, 0] = J
         Data[loop, 1] = np.mean(X['GauPts'])
         
-        # 灵敏度过滤
+        # 链式法则计算灵敏度
         dJ_dp = R.T @ dJ_dg
-        dJ_dp = Sh @ (dJ_dp / Hs)
-        dv_dp = R.T @ dv_dg
-        dv_dp = Sh @ (dv_dp / Hs)
+        dJ_dp = (Sh @ dJ_dp) / Hs.reshape(-1, 1)
         
-        # 打印结果（在更新前）
-        max_U = np.max(np.abs(U))
-        max_F = np.max(np.abs(F))
-        print(f' It.:{loop+1:5d} Obj.:{J:11.4f} Vol.:{np.mean(X["GauPts"]):7.3f} ch.:{change:7.3f} max|U|:{max_U:.2e} max|F|:{max_F:.2e}')
-
-        # 优化准则更新设计变量（先更新再绘图，确保可视化的是最新设计）
+        dv_dp = R.T @ dv_dg
+        dv_dp = (Sh @ dv_dp) / Hs.reshape(-1, 1)
+        
+        # 打印和绘图
+        print(f' It.:{loop+1:5d} Obj.:{J:11.4f} Vol.:{np.mean(X["GauPts"]):7.3f} ch.:{change:7.3f}')
+        X = plot_topy(X, GauPts, CtrPts, DenFied, Pos, case_number=case_number)
+        
+        if change < 0.01:
+            print('\n============================================================')
+            print('优化收敛!')
+            print(f'最终目标函数值: {J:.4f}')
+            print(f'最终体积分数: {np.mean(X["GauPts"]):.3f}')
+            print(f'总迭代次数: {loop+1}')
+            print('============================================================\n')
+            # 保存最终结果
+            X = plot_topy(X, GauPts, CtrPts, DenFied, Pos, case_number=case_number)
+            print(f'最终结果已保存到: results/case_{case_number}/\n')
+            break
+        
+        # 优化准则更新设计变量
         X = oc(X, R, Vmax, Sh, Hs, dJ_dp, dv_dp)
         change = np.max(np.abs(X['CtrPts_new'] - X['CtrPts']))
         Iter_Ch[loop] = change
         X['CtrPts'] = X['CtrPts_new']
-        # 保障一致：基于最新控制点重算高斯点密度
-        X['GauPts'] = (R @ X['CtrPts']).flatten()
-
-        # 绘图（使用最新设计）
-        X = plot_topy(X, GauPts, CtrPts, DenFied, Pos)
-
-        if change < 0.01:
-            break
     
-    print(f'\n优化完成！最终迭代次数: {loop+1}')
-    print(f'最终目标函数值: {J:.4f}')
-    print(f'最终体积分数: {np.mean(X["GauPts"]):.4f}')
+    print('='*60)
+    print('优化完成!')
+    print('='*60)
+    
+    return X, Data, Iter_Ch
 
+
+# ======================================================================================================================
+# 函数: iga_top2d
+#
+# 用于等几何拓扑优化的紧凑高效 Python 实现
+#
+# 开发者: 原始 MATLAB 代码 - Jie Gao
+# Email: JieGao@hust.edu.cn
+# Python 转换: 2025
+#
+# 主要参考文献:
+#
+# (1) Jie Gao, Lin Wang, Zhen Luo, Liang Gao. IgaTop: an implementation of topology optimization for structures
+# using IGA in Matlab. Structural and multidisciplinary optimization.
+#
+# (2) Jie Gao, Liang Gao, Zhen Luo, Peigen Li. Isogeometric topology optimization for continuum structures using
+# density distribution function. Int J Numer Methods Eng, 2019, 119:991–1017
+#
+# *********************************************   免责声明   *******************************************************
+# 作者保留程序的所有权利。程序可用于学术和教育目的。作者不保证代码没有错误，
+# 并且不对因使用程序而引起的任何事件承担责任。
+# ======================================================================================================================

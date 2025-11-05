@@ -1,55 +1,92 @@
 """
-形状函数模块 - 计算Shepard函数用于密度过滤
+Shepard 函数 (Shepard Function) - 平滑机制
+从 MATLAB 代码转换
 """
+
 import numpy as np
-from scipy.sparse import csr_matrix
+from scipy.sparse import coo_matrix
 
 
 def shep_fun(CtrPts, rmin):
     """
-    计算Shepard函数用于密度过滤
+    计算 Shepard 函数用于平滑设计变量
     
     参数:
-        CtrPts: 控制点信息
-        rmin: 最小过滤半径
+        CtrPts: 控制点字典
+                - NumU: U方向控制点数量
+                - NumV: V方向控制点数量
+        rmin: 最小半径
     
     返回:
-        Sh: 过滤矩阵
-        Hs: 行和向量
+        Sh: Shepard 函数稀疏矩阵
+        Hs: Sh 行和向量
+    
+    改编自 MATLAB IgaTop2D 代码
     """
     Ctr_NumU = CtrPts['NumU']
     Ctr_NumV = CtrPts['NumV']
     
-    # 预分配稀疏矩阵的索引和值
-    max_neighbors = (2 * (int(np.ceil(rmin)) - 1) + 1) ** 2
-    iH = []
-    jH = []
-    sH = []
+    # 预分配数组
+    total_size = Ctr_NumU * Ctr_NumV * (2 * (int(np.ceil(rmin)) - 1) + 1) ** 2
+    iH = np.ones(total_size)
+    jH = np.ones(total_size)
+    sH = np.zeros(total_size)
     
-    for j1 in range(Ctr_NumV):
-        for i1 in range(Ctr_NumU):
-            e1 = j1 * Ctr_NumU + i1 + 1  # MATLAB索引从1开始
+    k = 0
+    for j1 in range(1, Ctr_NumV + 1):
+        for i1 in range(1, Ctr_NumU + 1):
+            e1 = (j1 - 1) * Ctr_NumU + i1
             
-            # 计算邻居范围
-            j2_min = max(j1 - (int(np.ceil(rmin)) - 1), 0)
-            j2_max = min(j1 + (int(np.ceil(rmin)) - 1), Ctr_NumV - 1)
-            i2_min = max(i1 - (int(np.ceil(rmin)) - 1), 0)
-            i2_max = min(i1 + (int(np.ceil(rmin)) - 1), Ctr_NumU - 1)
+            j2_start = max(j1 - (int(np.ceil(rmin)) - 1), 1)
+            j2_end = min(j1 + (int(np.ceil(rmin)) - 1), Ctr_NumV)
             
-            for j2 in range(j2_min, j2_max + 1):
-                for i2 in range(i2_min, i2_max + 1):
-                    e2 = j2 * Ctr_NumU + i2 + 1  # MATLAB索引从1开始
+            for j2 in range(j2_start, j2_end + 1):
+                i2_start = max(i1 - (int(np.ceil(rmin)) - 1), 1)
+                i2_end = min(i1 + (int(np.ceil(rmin)) - 1), Ctr_NumU)
+                
+                for i2 in range(i2_start, i2_end + 1):
+                    e2 = (j2 - 1) * Ctr_NumU + i2
+                    
+                    iH[k] = e1
+                    jH[k] = e2
                     
                     theta = np.sqrt((j1 - j2)**2 + (i1 - i2)**2) / rmin / np.sqrt(2)
-                    weight = (max(0, 1 - theta) ** 6) * (35 * theta**2 + 18 * theta + 3)
-                    
-                    iH.append(e1 - 1)  # 转换为0-based索引
-                    jH.append(e2 - 1)  # 转换为0-based索引
-                    sH.append(weight)
+                    sH[k] = (max(0, (1 - theta))**6) * (35 * theta**2 + 18 * theta + 3)
+                    k += 1
     
-    # 创建稀疏矩阵
-    Sh = csr_matrix((sH, (iH, jH)), shape=(Ctr_NumU * Ctr_NumV, Ctr_NumU * Ctr_NumV))
+    # 截断到实际使用的大小
+    iH = iH[:k]
+    jH = jH[:k]
+    sH = sH[:k]
+    
+    # 创建稀疏矩阵 (转换为 0-based 索引)
+    Sh = coo_matrix((sH, (iH.astype(int) - 1, jH.astype(int) - 1))).tocsr()
+    
+    # 计算行和
     Hs = np.array(Sh.sum(axis=1)).flatten()
     
     return Sh, Hs
+
+
+# ======================================================================================================================
+# 函数: shep_fun
+#
+# 用于等几何拓扑优化的紧凑高效 Python 实现
+#
+# 开发者: 原始 MATLAB 代码 - Jie Gao
+# Email: JieGao@hust.edu.cn
+# Python 转换: 2025
+#
+# 主要参考文献:
+#
+# (1) Jie Gao, Lin Wang, Zhen Luo, Liang Gao. IgaTop: an implementation of topology optimization for structures
+# using IGA in Matlab. Structural and multidisciplinary optimization.
+#
+# (2) Jie Gao, Liang Gao, Zhen Luo, Peigen Li. Isogeometric topology optimization for continuum structures using
+# density distribution function. Int J Numer Methods Eng, 2019, 119:991–1017
+#
+# *********************************************   免责声明   *******************************************************
+# 作者保留程序的所有权利。程序可用于学术和教育目的。作者不保证代码没有错误，
+# 并且不对因使用程序而引起的任何事件承担责任。
+# ======================================================================================================================
 
