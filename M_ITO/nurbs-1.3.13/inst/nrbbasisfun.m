@@ -77,6 +77,15 @@ function [B, id] = nrbbasisfun (points, nrb)
     sp{idim} = findspan (nrb.number(idim)-1, nrb.order(idim)-1, pts_dim, knt{idim});
     N{idim} = basisfun(sp{idim}, pts_dim, nrb.order(idim)-1, knt{idim});
     num{idim} = numbasisfun (sp{idim}, pts_dim, nrb.order(idim)-1, knt{idim}) + 1;
+    
+    % Debug: print for boundary points (u=1.0 or v=0.5)
+    if (ndim == 2 && ~iscell(points) && (any(abs(pts_dim - 1.0) < 1e-10) || any(abs(pts_dim - 0.5) < 1e-10)))
+        fprintf('[Debug nrbbasisfun MATLAB] idim=%d, pts_dim=%.6f, span=%d, knt=[', idim, pts_dim, sp{idim});
+        fprintf('%.2f ', knt{idim});
+        fprintf('], num(1-based)=[');
+        fprintf('%d ', num{idim});
+        fprintf(']\n');
+    end
   end
   
   if (ndim == 1)

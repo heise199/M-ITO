@@ -280,7 +280,9 @@ def nrbbasisfun(points, nrb):
         else:
             pts_dim = points[idim, :]
         
-        sp.append(findspan(nrb['number'][idim]-1, nrb['order'][idim]-1, pts_dim, knt[idim]))
+        sp_idim = findspan(nrb['number'][idim]-1, nrb['order'][idim]-1, pts_dim, knt[idim])
+        sp.append(sp_idim)
+        
         N.append(basisfun(sp[idim], pts_dim, nrb['order'][idim]-1, knt[idim]))
         num.append(numbasisfun(sp[idim], pts_dim, nrb['order'][idim]-1, knt[idim]) + 1)  # +1 转为 1-based
     
@@ -355,6 +357,7 @@ def nrbbasisfun(points, nrb):
                     idx = ln.flatten().astype(int) - 1  # 转为 0-based
                     idx = np.clip(idx, 0, nrb['number'][idx_dim] - 1)  # 边界检查
                     indices.append(idx)
+                
                 id_vals[ipt, :] = np.ravel_multi_index(indices, nrb['number'], order='F') + 1  # +1 回 1-based
                 
                 # 使用 Fortran 顺序展平以匹配 MATLAB 线性编号

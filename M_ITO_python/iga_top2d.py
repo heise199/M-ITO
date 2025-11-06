@@ -34,12 +34,9 @@ def iga_top2d(L, W, Order, Num, BoundCon, Vmax, penal, rmin, case_number=None):
     
     改编自 MATLAB IgaTop2D 代码
     """
-    print('='*60)
-    print('IGA 拓扑优化 - Python 实现')
-    print('='*60)
-    print(f'参数: L={L}, W={W}, Order={Order}, Num={Num}')
-    print(f'边界条件={BoundCon}, Vmax={Vmax}, penal={penal}, rmin={rmin}')
-    print('='*60 + '\n')
+    print('\n========== IgaTop2D START ==========')
+    print(f'[INPUT] L={L:.2f}, W={W:.2f}, Order=[{Order[0]},{Order[1]}], Num=[{Num[0]},{Num[1]}]')
+    print(f'[INPUT] BoundCon={BoundCon}, Vmax={Vmax:.3f}, penal={penal:.1f}, rmin={rmin:.1f}')
     
     # ========== 材料属性 ==========
     E0 = 1.0
@@ -50,22 +47,25 @@ def iga_top2d(L, W, Order, Num, BoundCon, Vmax, penal, rmin, case_number=None):
                                        [0, 0, (1-nu)/2]])
     
     # ========== 生成几何模型 ==========
-    print('生成几何模型...')
     NURBS = geom_mod(L, W, Order, Num, BoundCon)
+    print(f'[NURBS] number=[{NURBS["number"][0]},{NURBS["number"][1]}], order=[{NURBS["order"][0]},{NURBS["order"][1]}]')
+    print(f'[NURBS] knots[0] length={len(NURBS["knots"][0])}, range=[{NURBS["knots"][0][0]:.6f}, {NURBS["knots"][0][-1]:.6f}]')
+    print(f'[NURBS] knots[1] length={len(NURBS["knots"][1])}, range=[{NURBS["knots"][1][0]:.6f}, {NURBS["knots"][1][-1]:.6f}]')
     
     # ========== IGA 准备 ==========
-    print('IGA 预处理...')
     CtrPts, Ele, GauPts = pre_iga(NURBS)
     Dim = len(NURBS['order'])
     Dofs = {'Num': Dim * CtrPts['Num']}
+    print(f'[IGA] Dim={Dim}, Dofs.Num={Dofs["Num"]}')
     
-    print('设置边界条件...')
     DBoudary, F = boun_cond(CtrPts, BoundCon, NURBS, Dofs['Num'])
+    print(f'[LOAD] F nonzero={np.count_nonzero(F)}, sum(abs(F))={np.sum(np.abs(F)):.6e}, max(abs(F))={np.max(np.abs(F)):.6e}')
     
     # ========== 初始化设计变量 ==========
-    print('初始化设计变量...')
+    print('\n初始化设计变量...')
     X = {}
     X['CtrPts'] = np.ones((CtrPts['Num'], 1))
+    print(f'X.CtrPts 初始化: shape={X["CtrPts"].shape}, 全为1')
     
     # 准备高斯点坐标（与 MATLAB 的 reshape(A',1,...) 等价：在 NumPy 中为按 C 顺序展平原矩阵）
     # 与 MATLAB: [reshape(CorU',1,Num); reshape(CorV',1,Num)] 完全等价
@@ -82,15 +82,20 @@ def iga_top2d(L, W, Order, Num, BoundCon, Vmax, penal, rmin, case_number=None):
     GauPts['PCor'] = None  # 占位，稍后用 R 与控制点直接计算物理坐标
     
     # 计算基函数
-    print('计算基函数...')
+    print('\n计算基函数...')
     N, id_vals = nrbbasisfun(GauPts['Cor'], NURBS)
     GauPts['id_vals'] = id_vals  # 保存每个高斯点对应的非零基函数编号（1-based）
+    
+    print(f'N shape: {N.shape}, id_vals shape: {id_vals.shape}')
+    print(f'N(1,:) = {N[0, :]}')
+    print(f'id(1,:) = {id_vals[0, :]}')
     
     # 构建稀疏映射矩阵 R
     R = np.zeros((GauPts['Num'], CtrPts['Num']))
     for i in range(GauPts['Num']):
         R[i, id_vals[i, :] - 1] = N[i, :]  # 转为 0-based 索引
     R = csr_matrix(R)
+    print(f'R 稀疏矩阵: shape={R.shape}, nnz={R.nnz}')
 
     # 用 R 与控制点坐标求高斯点物理坐标（与 MATLAB 一致，避免散点 nrbeval 差异）
     GauPts['PCor'] = np.vstack([
@@ -100,9 +105,13 @@ def iga_top2d(L, W, Order, Num, BoundCon, Vmax, penal, rmin, case_number=None):
     ])
     
     # 计算基函数导数
-    print('计算基函数导数...')
     dRu, dRv, id_dR = nrbbasisfunder(GauPts['Cor'], NURBS)
     GauPts['id_dR'] = id_dR
+    print(f'[BASIS] dRu size=[{dRu.shape[0]},{dRu.shape[1]}], dRv size=[{dRv.shape[0]},{dRv.shape[1]}]')
+    
+    print(f'dRu shape: {dRu.shape}, dRv shape: {dRv.shape}')
+    print(f'dRu(1,:) = {dRu[0, :]}')
+    print(f'dRv(1,:) = {dRv[0, :]}')
     
     # 调试信息（已禁用）
     if False:
@@ -137,8 +146,26 @@ def iga_top2d(L, W, Order, Num, BoundCon, Vmax, penal, rmin, case_number=None):
     for loop in range(nloop):
         # IGA 求解位移响应
         KE, dKE, dv_dg = stiff_ele2d(X, penal, Emin, DH, CtrPts, Ele, GauPts, dRu, dRv)
+        
+        if loop == 0:
+            print(f'\n=== 第1次迭代详细信息 ===')
+            print(f'KE{{1}} shape: {KE[0].shape}')
+            print(f'KE{{1}}(1:3,1:3):')
+            for i in range(3):
+                print(f'  {KE[0][i, :3]}')
+            print(f'dv_dg(1:5) = {dv_dg[:5, 0]}')
+        
         K = stiff_ass2d(KE, CtrPts, Ele, Dim, Dofs['Num'])
+        
+        if loop == 0:
+            print(f'K: shape={K.shape}, nnz={K.nnz}')
+        
         U = solving(CtrPts, DBoudary, Dofs, K, F, BoundCon)
+        
+        if loop == 0:
+            print(f'U: shape={U.shape}')
+            print(f'U(1:10) = {U[:10, 0]}')
+            print(f'max(abs(U)) = {np.max(np.abs(U)):.10e}')
         
         # 目标函数和灵敏度分析
         J = 0.0
@@ -156,6 +183,8 @@ def iga_top2d(L, W, Order, Num, BoundCon, Vmax, penal, rmin, case_number=None):
         
         Data[loop, 0] = J
         Data[loop, 1] = np.mean(X['GauPts'])
+        print(f'[OBJ] J={J:.6e}, mean(X.GauPts)={np.mean(X["GauPts"]):.6f}')
+        print(f'[SENS] dJ_dg: min={np.min(dJ_dg):.6e}, max={np.max(dJ_dg):.6e}, sum={np.sum(dJ_dg):.6e}')
         
         # 链式法则计算灵敏度
         dJ_dp = R.T @ dJ_dg
@@ -163,32 +192,26 @@ def iga_top2d(L, W, Order, Num, BoundCon, Vmax, penal, rmin, case_number=None):
         
         dv_dp = R.T @ dv_dg
         dv_dp = (Sh @ dv_dp) / Hs.reshape(-1, 1)
+        print(f'[SENS] dJ_dp: min={np.min(dJ_dp):.6e}, max={np.max(dJ_dp):.6e}, sum={np.sum(dJ_dp):.6e}')
+        print(f'[SENS] dv_dp: min={np.min(dv_dp):.6e}, max={np.max(dv_dp):.6e}, sum={np.sum(dv_dp):.6e}')
         
         # 打印和绘图
         print(f' It.:{loop+1:5d} Obj.:{J:11.4f} Vol.:{np.mean(X["GauPts"]):7.3f} ch.:{change:7.3f}')
         X = plot_topy(X, GauPts, CtrPts, DenFied, Pos, case_number=case_number)
         
         if change < 0.01:
-            print('\n============================================================')
-            print('优化收敛!')
-            print(f'最终目标函数值: {J:.4f}')
-            print(f'最终体积分数: {np.mean(X["GauPts"]):.3f}')
-            print(f'总迭代次数: {loop+1}')
-            print('============================================================\n')
-            # 保存最终结果
             X = plot_topy(X, GauPts, CtrPts, DenFied, Pos, case_number=case_number)
-            print(f'最终结果已保存到: results/case_{case_number}/\n')
             break
         
         # 优化准则更新设计变量
         X = oc(X, R, Vmax, Sh, Hs, dJ_dp, dv_dp)
+        print(f'[OC] X.CtrPts_new: min={np.min(X["CtrPts_new"]):.6f}, max={np.max(X["CtrPts_new"]):.6f}, mean={np.mean(X["CtrPts_new"]):.6f}')
         change = np.max(np.abs(X['CtrPts_new'] - X['CtrPts']))
+        print(f'[CHANGE] change={change:.6e}')
         Iter_Ch[loop] = change
         X['CtrPts'] = X['CtrPts_new']
     
-    print('='*60)
-    print('优化完成!')
-    print('='*60)
+    print('\n========== IgaTop2D END ==========')
     
     return X, Data, Iter_Ch
 

@@ -46,44 +46,169 @@ def bspkntins(d, c, k, u):
     ic = np.zeros((mc, nc+nu))
     ik = np.zeros(nk+nu)
     
+    # MATLAB: n = nc - 1;
     n = nc - 1
+    # MATLAB: r = nu - 1;
     r = nu - 1
     
+    # MATLAB: m = n + d + 1;
     m = n + d + 1
+    # MATLAB: a = findspan(n, d, u(1), k); (1-based)
+    # Python: u(1) -> u[0]
     a = int(findspan(n, d, u[0], k))
+    # MATLAB: b = findspan(n, d, u(r+1), k); (1-based)
+    # Python: u(r+1) -> u[r]
     b = int(findspan(n, d, u[r], k))
+    # MATLAB: b = b+1;
     b = b + 1
     
-    # 复制未受影响的控制点
-    ic[:, 0:a-d+1] = c[:, 0:a-d+1]
+    # MATLAB: ic(:,b+nu:nc+nu) = c(:,b:nc); (1-based)
+    # Note: After b=b+1, our Python b equals MATLAB b (since MATLAB findspan returns 1-based, Python returns 0-based)
+    # MATLAB b+nu:nc+nu (1-based, inclusive) -> Python [b+nu-1:nc+nu-1+1] = [b+nu-1:nc+nu]
+    # MATLAB c(:,b:nc) (1-based, inclusive) -> Python c[:, b-1:nc-1+1] = c[:, b-1:nc]
+    # Simplify: ic[:, b+nu-1:nc+nu] = c[:, b-1:nc]
+    # But we need to make b consistent. Since Python findspan returns 0-based, and we did b=b+1,
+    # Python's b is actually one less than MATLAB's b.
+    # Let's denote: MATLAB's b_m, Python's findspan return as span_p (0-based)
+    # MATLAB: span_m = findspan(...) (1-based), b_m = span_m + 1
+    # Python: span_p = findspan(...) (0-based), b_p = span_p + 1
+    # Since span_m = span_p + 1, we have b_m = (span_p + 1) + 1 = span_p + 2 = b_p + 1
+    # So MATLAB's b is Python's b + 1
+    # Therefore: MATLAB ic(:,b:nc) -> Python ic[:, (b+1)-1:nc] = ic[:, b:nc]
+    # And: MATLAB c(:,b:nc) -> Python c[:, b-1+1:nc] wait this is getting confusing.
+    #
+    # Let me use direct mapping: MATLAB (1-based) column i -> Python (0-based) column i-1
+    # MATLAB: ic(:, b+nu : nc+nu) where b is 1-based value
+    # Python: ic[:, (b+nu)-1 : (nc+nu)-1+1] = ic[:, b+nu-1 : nc+nu]
+    # But our Python b = findspan_result_0based + 1, so it's NOT the same as MATLAB b
+    # MATLAB b = findspan_result_1based + 1
+    # findspan_result_1based = findspan_result_0based + 1
+    # So MATLAB b = findspan_result_0based + 1 + 1 = Python_b + 1
+    # Therefore when MATLAB uses b, Python should use b+1? No wait...
+    #
+    # OK let me just look at the actual MATLAB implementation more carefully:
+    # MATLAB line 64: a = findspan(n,d,u(1),k);
+    # This returns a 1-based span index. Let's call it a_m.
+    # MATLAB line 65: b = findspan(n,d,u(r+1),k);
+    # This returns a 1-based span index. Let's call it b_span_m.
+    # MATLAB line 66: b = b + 1;
+    # So b_m = b_span_m + 1
+    #
+    # In Python:
+    # a = int(findspan(n, d, u[0], k))  # Returns 0-based, call it a_p
+    # b = int(findspan(n, d, u[r], k))  # Returns 0-based, call it b_span_p
+    # b = b + 1  # So b_p = b_span_p + 1
+    #
+    # Relationship: a_m = a_p + 1, b_span_m = b_span_p + 1
+    # Therefore: b_m = b_span_m + 1 = (b_span_p + 1) + 1 = b_span_p + 2
+    # And: b_p = b_span_p + 1
+    # So: b_m = b_p + 1
+    #
+    # MATLAB line 69: ic(:,1:a-d+1) = c(:,1:a-d+1);
+    # MATLAB columns 1 to a-d+1 (1-based, inclusive) -> Python columns 0 to a-d (inclusive)
+    # But a is a_m in MATLAB, a_p in Python, and a_m = a_p + 1
+    # So MATLAB: columns 1 to a_m-d+1 = columns 1 to (a_p+1)-d+1 = columns 1 to a_p-d+2
+    # Python equivalent: columns 0 to (a_p-d+2)-1 = columns 0 to a_p-d+1
+    # Which is: ic[:, 0:a_p-d+1+1] = ic[:, 0:a_p-d+2]
+    # But the current code has: ic[:, 0:a-d+1] where a=a_p, so it's ic[:, 0:a_p-d+1]
+    # This is WRONG! It should be ic[:, 0:a_p-d+2] or ic[:, 0:a-d+2]
+    #
+    # Hmm, let me double-check. MATLAB a-d+1 where a=a_m
+    # We have a_m = a_p + 1, so a_m - d + 1 = a_p + 1 - d + 1 = a_p - d + 2
+    # MATLAB 1:a_m-d+1 means columns from 1 to a_p-d+2 (1-based, inclusive)
+    # Python equivalent: columns from 0 to a_p-d+1 (inclusive), i.e., 0:a_p-d+2
+    # So it should be: ic[:, 0:a-d+2] = c[:, 0:a-d+2]
+    #
+    # Similarly for line 70: MATLAB ic(:,b+nu:nc+nu) = c(:,b:nc);
+    # where b = b_m = b_p + 1
+    # MATLAB b+nu where b=b_m means (b_p+1)+nu = b_p+nu+1
+    # MATLAB columns b+nu:nc+nu (1-based) = columns (b_p+nu+1):(nc+nu) (1-based, inclusive)
+    # Python equivalent: columns (b_p+nu+1)-1 : (nc+nu)-1 (inclusive) + 1 for Python slicing
+    # = columns b_p+nu : nc+nu
+    # = ic[:, b+nu:nc+nu] where b=b_p
+    # Which matches what we had before!
+    #
+    # And MATLAB c(:,b:nc) where b=b_m = b_p+1
+    # MATLAB columns b:nc (1-based) = columns (b_p+1):nc (1-based, inclusive)
+    # Python equivalent: columns (b_p+1)-1 : nc-1 (inclusive) + 1 for slicing
+    # = columns b_p : nc
+    # = c[:, b:nc] where b=b_p
+    #
+    # So line 70 should be: ic[:, b+nu:nc+nu] = c[:, b:nc] (not b-1!)
+    #
+    # And line 68-69 should be: ic[:, 0:a-d+2] = c[:, 0:a-d+2]
+    #
+    # Now let me also check lines 72-73:
+    # MATLAB line 67: ik(1:a+1) = k(1:a+1);
+    # where a = a_m = a_p + 1
+    # MATLAB columns 1:a+1 (1-based) = 1:(a_p+1)+1 = 1:a_p+2
+    # Python equivalent: 0:a_p+2-1+1 = 0:a_p+2 = 0:a+1 where a=a_p
+    # So: ik[0:a+2] = k[0:a+2] NOT ik[0:a+1] = k[0:a+1]!
+    #
+    # MATLAB line 68: ik(b+d+nu+1:m+nu+1) = k(b+d+1:m+1);
+    # where b = b_m = b_p + 1
+    # MATLAB b+d+nu+1 = (b_p+1)+d+nu+1 = b_p+d+nu+2
+    # MATLAB columns (b+d+nu+1):(m+nu+1) (1-based) = columns (b_p+d+nu+2):(m+nu+1) (1-based, inclusive)
+    # Python equivalent: columns (b_p+d+nu+2)-1 : (m+nu+1)-1 (inclusive) + 1 for slicing
+    # = columns b_p+d+nu+1 : m+nu+1
+    # = ik[b+d+nu+1:m+nu+1] where b=b_p
+    #
+    # And MATLAB k(b+d+1:m+1) = k((b_p+1)+d+1:m+1) = k(b_p+d+2:m+1) (1-based, inclusive)
+    # Python equivalent: k[(b_p+d+2)-1 : (m+1)-1 + 1] = k[b_p+d+1:m+1] = k[b+d+1:m+1] where b=b_p
+    #
+    # So line 73 should be: ik[b+d+nu+1:m+nu+1] = k[b+d+1:m+1]
+    #
+    # Summary of corrections:
+    # Line ~67: ic[:, 0:a-d+1] -> ic[:, 0:a-d+2]
+    # Line ~78: ic[:, b-1+nu:nc+nu] = c[:, b-1:nc] -> ic[:, b+nu:nc+nu] = c[:, b:nc]
+    # Line ~82: ik[0:a+1] = k[0:a+1] -> ik[0:a+2] = k[0:a+2]
+    # Line ~85: ik[b+d+nu:m+nu+1] = k[b+d:m+1] -> ik[b+d+nu+1:m+nu+1] = k[b+d+1:m+1]
+    
+    ic[:, 0:a-d+2] = c[:, 0:a-d+2]
     ic[:, b+nu:nc+nu] = c[:, b:nc]
     
-    # 复制节点
-    ik[0:a+1] = k[0:a+1]
-    ik[b+d+nu:m+nu+1] = k[b+d:m+1]
+    # MATLAB: ik(1:a+1) = k(1:a+1); (1-based, inclusive)
+    # Python: ik[0:a+2] = k[0:a+2]
+    ik[0:a+2] = k[0:a+2]
+    # MATLAB: ik(b+d+nu+1:m+nu+1) = k(b+d+1:m+1); (1-based, inclusive)
+    # Python: ik[b+d+nu+1:m+nu+1] = k[b+d+1:m+1]
+    ik[b+d+nu+1:m+nu+1] = k[b+d+1:m+1]
     
+    # MATLAB: ii = b + d - 1;
     ii = b + d - 1
+    # MATLAB: ss = ii + nu;
     ss = ii + nu
     
     for jj in range(r, -1, -1):
         # MATLAB: ind = (a+1):ii; ind = ind(u(jj+1)<=k(ind+1));
-        # Python: ind 从 a 到 ii-1，然后筛选满足 u[jj] <= k[ind+1] 的
-        ind = np.arange(a, ii+1)  # 包含 ii
-        if len(ind) > 0 and max(ind) + 1 < len(k):
-            mask = u[jj] <= k[ind+1]
-            ind = ind[mask]
-        else:
-            ind = np.array([], dtype=int)
+        # Convert from MATLAB 1-based to Python 0-based
+        ind = np.arange(a, ii+1)  # Python 0-based: a to ii
         
-        # 复制控制点和节点
-        for i in ind:
-            idx_ic = i + ss - ii - d
-            idx_c = i - d
-            if 0 <= idx_ic < ic.shape[1] and 0 <= idx_c < c.shape[1]:
-                ic[:, idx_ic] = c[:, idx_c]
-            idx_ik = i + ss - ii
-            if 0 <= idx_ik < len(ik) and i + 1 < len(k):
-                ik[idx_ik] = k[i+1]
+        # Filter indices where u[jj] <= k[ind+1]
+        if len(ind) > 0:
+            # Check bounds
+            valid_mask = (ind + 1) < len(k)
+            ind = ind[valid_mask]
+            if len(ind) > 0:
+                mask = u[jj] <= k[ind+1]
+                ind = ind[mask]
+        
+        # Vectorized copy of control points and knots (matching MATLAB)
+        if len(ind) > 0:
+            # ic(:,ind+ss-ii-d) = c(:,ind-d)
+            ic_indices = ind + ss - ii - d
+            c_indices = ind - d
+            # Bound check
+            valid = (ic_indices >= 0) & (ic_indices < ic.shape[1]) & (c_indices >= 0) & (c_indices < c.shape[1])
+            ic[:, ic_indices[valid]] = c[:, c_indices[valid]]
+            
+            # ik(ind+ss-ii+1) = k(ind+1) in MATLAB 1-based
+            # ik[ind+ss-ii] = k[ind+1] in Python 0-based
+            ik_indices = ind + ss - ii
+            k_indices = ind + 1
+            # Bound check
+            valid = (ik_indices >= 0) & (ik_indices < len(ik)) & (k_indices >= 0) & (k_indices < len(k))
+            ik[ik_indices[valid]] = k[k_indices[valid]]
         
         ii = ii - len(ind)
         ss = ss - len(ind)

@@ -31,6 +31,13 @@ end
 F = zeros(Dofs_Num,1);
 switch BoundCon
     case {1,2,3,4}
+        fprintf('[Debug boun_cond MATLAB] Control points receiving load: ');
+        fprintf('%d ', NBoudary.CtrPtsOrd);
+        fprintf('\n[Debug boun_cond MATLAB] Load weights: ');
+        fprintf('%.6f ', NBoudary.N);
+        fprintf('\n[Debug boun_cond MATLAB] DOF indices (1-based): ');
+        fprintf('%d ', NBoudary.CtrPtsOrd+CtrPts.Num);
+        fprintf('\n[Debug boun_cond MATLAB] CtrPts.Num=%d\n', CtrPts.Num);
         F(NBoudary.CtrPtsOrd+CtrPts.Num) = -1*NBoudary.N;
     case 5
         F(NBoudary.CtrPtsOrd) = -1*NBoudary.N;
@@ -50,7 +57,7 @@ end
 % using IGA in Matlab. Structural and multidisciplinary optimization.                                                  %
 %                                                                                                                      %
 % (2) Jie Gao, Liang Gao, Zhen Luo, Peigen Li. Isogeometric topology optimization for continuum structures using       %
-% density distribution function. Int J Numer Methods Eng, 2019, 119:991¨C1017                                          %
+% density distribution function. Int J Numer Methods Eng, 2019, 119:991ï¿½C1017                                          %
 %                                                                                                                      %
 % *********************************************   Disclaimer   ******************************************************* %
 % The authors reserve all rights for the programs. The programs may be distributed and used for academic and           %

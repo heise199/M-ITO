@@ -58,7 +58,9 @@ def pre_iga(NURBS):
     Ele['NumU'] = len(np.unique(NURBS['knots'][0])) - 1  # U 方向单元数
     Ele['NumV'] = len(np.unique(NURBS['knots'][1])) - 1  # V 方向单元数
     Ele['Num'] = Ele['NumU'] * Ele['NumV']  # 总单元数
-    # 使用 Fortran 顺序以匹配 MATLAB 的列主序 reshape
+    # MATLAB: reshape(1:N, NumU, NumV)'
+    # 这相当于先按列填充(NumU, NumV)，然后转置得到(NumV, NumU)
+    # 在Python中，使用order='F'先填充为列主序，然后转置
     Ele['Seque'] = np.arange(1, Ele['Num'] + 1).reshape(Ele['NumU'], Ele['NumV'], order='F').T
     
     Ele['KnotsU'] = np.column_stack([Knots['U'][:-1], Knots['U'][1:]])  # U 方向单元节点
@@ -70,10 +72,25 @@ def pre_iga(NURBS):
     
     # 计算单元-控制点连接
     # 在每个单元中心点求值基函数以获取非零基函数的索引
-    u_centers = (Ele['KnotsU'][:, 0] + Ele['KnotsU'][:, 1]) / 2
-    v_centers = (Ele['KnotsV'][:, 0] + Ele['KnotsV'][:, 1]) / 2
+    # MATLAB: nrbbasisfun({(sum(Ele.KnotsU,2)./2)', (sum(Ele.KnotsV,2)./2)'}, NURBS)
+    # 这里需要为每个单元找到其在网格中的位置，然后计算其中心点坐标
+    centers_u = []
+    centers_v = []
+    for ide in range(Ele['Num']):
+        # 找到单元在网格中的位置
+        idv, idu = np.where(Ele['Seque'] == ide + 1)
+        idv = idv[0]
+        idu = idu[0]
+        # 计算该单元的中心点坐标
+        u_center = (Ele['KnotsU'][idu, 0] + Ele['KnotsU'][idu, 1]) / 2
+        v_center = (Ele['KnotsV'][idv, 0] + Ele['KnotsV'][idv, 1]) / 2
+        centers_u.append(u_center)
+        centers_v.append(v_center)
     
-    _, Ele_CtrPtsCon = nrbbasisfun([u_centers, v_centers], NURBS)
+    # 准备成点坐标形式 (2, Ele.Num)，每列是一个 (u, v) 点
+    centers = np.vstack([centers_u, centers_v])
+    
+    _, Ele_CtrPtsCon = nrbbasisfun(centers, NURBS)
     Ele['CtrPtsCon'] = Ele_CtrPtsCon
     
     # 调试信息
@@ -92,9 +109,11 @@ def pre_iga(NURBS):
     GauPts['CorV'] = np.zeros((Ele['Num'], Ele['GauPtsNum']))
     
     for ide in range(Ele['Num']):
-        # 直接根据线性编号计算 (idu, idv) 保持一致顺序：idu 变化最快
-        idu = ide % Ele['NumU']
-        idv = ide // Ele['NumU']
+        # 使用 MATLAB 风格的 find(Ele.Seque == ide)
+        # 在转置后的 Ele['Seque'] (NumV x NumU) 中查找单元 ide+1（1-based）
+        idv, idu = np.where(Ele['Seque'] == ide + 1)
+        idv = idv[0]  # 获取第一个（唯一）匹配
+        idu = idu[0]
         Ele_Knot_U = Ele['KnotsU'][idu, :]
         Ele_Knot_V = Ele['KnotsV'][idv, :]
         

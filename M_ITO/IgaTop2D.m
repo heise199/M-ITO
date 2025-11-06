@@ -2,11 +2,19 @@ function IgaTop2D(L, W, Order, Num, BoundCon, Vmax, penal, rmin)
 %% Material properties
 path = genpath(pwd); addpath(path); 
 E0 = 1; Emin = 1e-9; nu = 0.3; DH=E0/(1-nu^2)*[1 nu 0; nu 1 0; 0 0 (1-nu)/2];
+fprintf('\n========== IgaTop2D START ==========\n');
+fprintf('[INPUT] L=%.2f, W=%.2f, Order=[%d,%d], Num=[%d,%d]\n', L, W, Order(1), Order(2), Num(1), Num(2));
+fprintf('[INPUT] BoundCon=%d, Vmax=%.3f, penal=%.1f, rmin=%.1f\n', BoundCon, Vmax, penal, rmin);
 NURBS = Geom_Mod(L, W, Order, Num, BoundCon); close all
+fprintf('[NURBS] number=[%d,%d], order=[%d,%d]\n', NURBS.number(1), NURBS.number(2), NURBS.order(1), NURBS.order(2));
+fprintf('[NURBS] knots{1} length=%d, range=[%.6f, %.6f]\n', length(NURBS.knots{1}), NURBS.knots{1}(1), NURBS.knots{1}(end));
+fprintf('[NURBS] knots{2} length=%d, range=[%.6f, %.6f]\n', length(NURBS.knots{2}), NURBS.knots{2}(1), NURBS.knots{2}(end));
 %% Preparation for IGA
 [CtrPts, Ele, GauPts] = Pre_IGA(NURBS);
 Dim = numel(NURBS.order); Dofs.Num = Dim*CtrPts.Num;
+fprintf('[IGA] Dim=%d, Dofs.Num=%d\n', Dim, Dofs.Num);
 [DBoudary, F] = Boun_Cond(CtrPts, BoundCon, NURBS, Dofs.Num);
+fprintf('[LOAD] F nonzero=%d, sum(abs(F))=%.6e, max(abs(F))=%.6e\n', nnz(F), sum(abs(F)), max(abs(F)));
 %% Initialization of control design variables
 X.CtrPts = ones(CtrPts.Num,1);
 GauPts.Cor = [reshape(GauPts.CorU',1,GauPts.Num); reshape(GauPts.CorV',1,GauPts.Num)];
@@ -16,7 +24,10 @@ GauPts.PCor = GauPts.PCor./GauPts.Pw;
 R = zeros(GauPts.Num,CtrPts.Num);
 for i = 1:GauPts.Num, R(i,id(i,:)) = N(i,:); end
 R = sparse(R);
+fprintf('[BASIS] N size=[%d,%d], id size=[%d,%d]\n', size(N,1), size(N,2), size(id,1), size(id,2));
+fprintf('[BASIS] R size=[%d,%d], nnz(R)=%d\n', size(R,1), size(R,2), nnz(R));
 [dRu, dRv] = nrbbasisfunder(GauPts.Cor, NURBS);
+fprintf('[BASIS] dRu size=[%d,%d], dRv size=[%d,%d]\n', size(dRu,1), size(dRu,2), size(dRv,1), size(dRv,2));
 
 % Debug info: print nrbbasisfunder output information
 fprintf('=== nrbbasisfunder Debug Info ===\n');
@@ -35,10 +46,15 @@ X.GauPts = R*X.CtrPts;
 change = 1; nloop = 150; Data = zeros(nloop,2); Iter_Ch = zeros(nloop,1);
 [DenFied, Pos] = Plot_Data(Num, NURBS);
 for loop = 1:nloop
+    fprintf('\n========== ITERATION %d ==========\n', loop);
     %% IGA to evaluate the displacement responses
     [KE, dKE, dv_dg] = Stiff_Ele2D(X, penal, Emin, DH, CtrPts, Ele, GauPts, dRu, dRv);
+    fprintf('[STIFF] KE{1} size=[%d,%d], norm(KE{1})=%.6e\n', size(KE{1},1), size(KE{1},2), norm(KE{1},'fro'));
+    fprintf('[STIFF] dv_dg: min=%.6e, max=%.6e, sum=%.6e\n', min(dv_dg), max(dv_dg), sum(dv_dg));
     [K] = Stiff_Ass2D(KE, CtrPts, Ele, Dim, Dofs.Num);
+    fprintf('[ASS] K size=[%d,%d], nnz(K)=%d, norm(K)=%.6e\n', size(K,1), size(K,2), nnz(K), norm(K,'fro'));
     U = Solving(CtrPts, DBoudary, Dofs, K, F, BoundCon);
+    fprintf('[SOLVE] U: min=%.6e, max=%.6e, norm=%.6e\n', min(U), max(U), norm(U));
     %% Objective function and sensitivity analysis
     J = 0;
     dJ_dg = zeros(GauPts.Num,1);
@@ -53,15 +69,22 @@ for loop = 1:nloop
         end
     end
     Data(loop,1) = J; Data(loop,2) = mean(X.GauPts(:));
+    fprintf('[OBJ] J=%.6e, mean(X.GauPts)=%.6f\n', J, mean(X.GauPts(:)));
+    fprintf('[SENS] dJ_dg: min=%.6e, max=%.6e, sum=%.6e\n', min(dJ_dg), max(dJ_dg), sum(dJ_dg));
     dJ_dp = R'*dJ_dg; dJ_dp = Sh*(dJ_dp./Hs);
     dv_dp = R'*dv_dg; dv_dp = Sh*(dv_dp./Hs);
+    fprintf('[SENS] dJ_dp: min=%.6e, max=%.6e, sum=%.6e\n', min(dJ_dp), max(dJ_dp), sum(dJ_dp));
+    fprintf('[SENS] dv_dp: min=%.6e, max=%.6e, sum=%.6e\n', min(dv_dp), max(dv_dp), sum(dv_dp));
     %% Print and plot results
     fprintf(' It.:%5i Obj.:%11.4f Vol.:%7.3f ch.:%7.3f\n',loop,J,mean(X.GauPts(:)),change);
     [X] = Plot_Topy(X, GauPts, CtrPts, DenFied, Pos);
     if change < 0.01, break; end
     %% Optimality criteria to update design variables
     X = OC(X, R, Vmax, Sh, Hs, dJ_dp, dv_dp);
+    fprintf('[OC] X.CtrPts_new: min=%.6f, max=%.6f, mean=%.6f\n', min(X.CtrPts_new), max(X.CtrPts_new), mean(X.CtrPts_new));
     change = max(abs(X.CtrPts_new(:)-X.CtrPts(:))); Iter_Ch(loop) = change;
+    fprintf('[CHANGE] change=%.6e\n', change);
     X.CtrPts = X.CtrPts_new;
 end
+fprintf('\n========== IgaTop2D END ==========\n');
 end

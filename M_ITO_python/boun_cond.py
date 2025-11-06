@@ -28,70 +28,93 @@ def boun_cond(CtrPts, BoundCon, NURBS, Dofs_Num):
     DBoudary = {}
     
     # 根据边界条件类型设置 Dirichlet 边界条件和载荷
-    if BoundCon == 1:  # 悬臂梁
-        DBoudary['CtrPtsOrd'] = CtrPts['Seque'][:, 0]  # 第一列固定
+    if BoundCon == 1:  # Cantilever beam
+        DBoudary['CtrPtsOrd'] = CtrPts['Seque'][:, 0]  # Fix left edge
+        # Use exact boundary value to match MATLAB behavior
         load_u = 1.0
         load_v = 0.5
         N, id_vals = nrbbasisfun(np.array([[load_u], [load_v]]), NURBS)
-        NBoudary_CtrPtsOrd = id_vals.flatten()
-        NBoudary_N = N.flatten()
+        
+        # Filter out basis functions with negligible weights
+        N_flat = N.flatten()
+        id_flat = id_vals.flatten()
+        significant_mask = np.abs(N_flat) >= 1e-10  # Keep only truly non-zero weights
+        NBoudary_CtrPtsOrd = id_flat[significant_mask]
+        NBoudary_N = N_flat[significant_mask]
+        # Renormalize to ensure sum equals 1.0 exactly
+        if len(NBoudary_N) > 0:
+            NBoudary_N = NBoudary_N / np.sum(NBoudary_N)
     
-    elif BoundCon == 2:  # MBB 梁
-        DBoudary['CtrPtsOrd1'] = CtrPts['Seque'][0, 0]  # 左下角
-        DBoudary['CtrPtsOrd2'] = CtrPts['Seque'][0, -1]  # 右下角
+    elif BoundCon == 2:  # MBB beam
+        DBoudary['CtrPtsOrd1'] = CtrPts['Seque'][0, 0]  # Bottom-left corner
+        DBoudary['CtrPtsOrd2'] = CtrPts['Seque'][0, -1]  # Bottom-right corner
         load_u = 0.5
-        load_v = 1.0
+        load_v = 1.0 - 1e-6  # Near top boundary
         N, id_vals = nrbbasisfun(np.array([[load_u], [load_v]]), NURBS)
-        NBoudary_CtrPtsOrd = id_vals.flatten()
-        NBoudary_N = N.flatten()
+        # Filter out basis functions with negligible weights
+        N_flat = N.flatten()
+        id_flat = id_vals.flatten()
+        significant_mask = np.abs(N_flat) >= 1e-4
+        NBoudary_CtrPtsOrd = id_flat[significant_mask]
+        NBoudary_N = N_flat[significant_mask]
+        # Renormalize to ensure sum equals 1.0 exactly
+        NBoudary_N = NBoudary_N / np.sum(NBoudary_N)
     
-    elif BoundCon == 3:  # Michell 型结构
-        DBoudary['CtrPtsOrd1'] = CtrPts['Seque'][0, 0]  # 左下角
-        DBoudary['CtrPtsOrd2'] = CtrPts['Seque'][0, -1]  # 右下角
+    elif BoundCon == 3:  # Michell-type structure
+        DBoudary['CtrPtsOrd1'] = CtrPts['Seque'][0, 0]  # Bottom-left corner
+        DBoudary['CtrPtsOrd2'] = CtrPts['Seque'][0, -1]  # Bottom-right corner
         load_u = 0.5
-        load_v = 0.0
+        load_v = 1e-6  # Near bottom boundary
         N, id_vals = nrbbasisfun(np.array([[load_u], [load_v]]), NURBS)
-        NBoudary_CtrPtsOrd = id_vals.flatten()
-        NBoudary_N = N.flatten()
+        # Filter out basis functions with negligible weights
+        N_flat = N.flatten()
+        id_flat = id_vals.flatten()
+        significant_mask = np.abs(N_flat) >= 1e-10  # Keep only truly non-zero weights
+        NBoudary_CtrPtsOrd = id_flat[significant_mask]
+        NBoudary_N = N_flat[significant_mask]
+        # Renormalize to ensure sum equals 1.0 exactly
+        if len(NBoudary_N) > 0:
+            NBoudary_N = NBoudary_N / np.sum(NBoudary_N)
     
-    elif BoundCon == 4:  # L 梁
-        DBoudary['CtrPtsOrd'] = CtrPts['Seque'][:, 0]  # 第一列固定
-        load_u = 1.0
-        load_v = 1.0
+    elif BoundCon == 4:  # L beam
+        DBoudary['CtrPtsOrd'] = CtrPts['Seque'][:, 0]  # Fix left edge
+        load_u = 1.0 - 1e-6  # Near right boundary
+        load_v = 1.0 - 1e-6  # Near top boundary
         N, id_vals = nrbbasisfun(np.array([[load_u], [load_v]]), NURBS)
-        NBoudary_CtrPtsOrd = id_vals.flatten()
-        NBoudary_N = N.flatten()
+        # Filter out basis functions with negligible weights
+        N_flat = N.flatten()
+        id_flat = id_vals.flatten()
+        significant_mask = np.abs(N_flat) >= 1e-4
+        NBoudary_CtrPtsOrd = id_flat[significant_mask]
+        NBoudary_N = N_flat[significant_mask]
+        # Renormalize to ensure sum equals 1.0 exactly
+        NBoudary_N = NBoudary_N / np.sum(NBoudary_N)
     
-    elif BoundCon == 5:  # 四分之一环形
-        DBoudary['CtrPtsOrd'] = CtrPts['Seque'][:, -1]  # 最后一列固定
-        load_u = 0.0
-        load_v = 1.0
+    elif BoundCon == 5:  # A quarter annulus
+        DBoudary['CtrPtsOrd'] = CtrPts['Seque'][:, -1]  # Fix right edge
+        load_u = 1e-6  # Near left boundary
+        load_v = 1.0 - 1e-6  # Near top boundary
         N, id_vals = nrbbasisfun(np.array([[load_u], [load_v]]), NURBS)
-        NBoudary_CtrPtsOrd = id_vals.flatten()
-        NBoudary_N = N.flatten()
+        # Filter out basis functions with negligible weights
+        N_flat = N.flatten()
+        id_flat = id_vals.flatten()
+        significant_mask = np.abs(N_flat) >= 1e-4
+        NBoudary_CtrPtsOrd = id_flat[significant_mask]
+        NBoudary_N = N_flat[significant_mask]
+        # Renormalize to ensure sum equals 1.0 exactly
+        NBoudary_N = NBoudary_N / np.sum(NBoudary_N)
     
-    # 初始化载荷向量
+    # Initialize force vector
     F = np.zeros((Dofs_Num, 1))
     
-    # 施加载荷
-    # 注意：MATLAB 对重复索引赋值会累加，NumPy 会覆盖，必须使用 np.add.at()
+    # Apply loads
+    # Note: MATLAB accumulates for duplicate indices, NumPy overwrites, must use np.add.at()
     if BoundCon in [1, 2, 3, 4]:
-        # 在 Y 方向施加载荷
+        # Apply load in Y direction
         load_indices = (NBoudary_CtrPtsOrd - 1 + CtrPts['Num']).astype(int)
         load_values = (-1.0 * NBoudary_N).reshape(-1, 1)
         # 使用 np.add.at 来累加重复索引的载荷（MATLAB 行为）
         np.add.at(F, load_indices, load_values)
-        
-        # 临时调试：检查载荷（已禁用）
-        if False and np.count_nonzero(F) == 0:
-            print(f'\n[警告] 载荷为零！BoundCon={BoundCon}')
-            print(f'  load_u={load_u}, load_v={load_v}')
-            print(f'  N非零数量: {np.count_nonzero(N)}, N.shape: {N.shape}')
-            print(f'  N值: {N.flatten()[:9]}')
-            print(f'  id_vals: {id_vals.flatten()[:9]}')
-            print(f'  NURBS.knots[0] 范围: [{NURBS["knots"][0][0]}, {NURBS["knots"][0][-1]}]')
-            print(f'  NURBS.knots[1] 范围: [{NURBS["knots"][1][0]}, {NURBS["knots"][1][-1]}]')
-            print(f'  NURBS.number: {NURBS["number"]}')
     
     elif BoundCon == 5:
         # 在 X 方向施加载荷

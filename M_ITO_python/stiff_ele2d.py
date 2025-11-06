@@ -45,9 +45,11 @@ def stiff_ele2d(X, penal, Emin, DH, CtrPts, Ele, GauPts, dRu, dRv):
     neg_det_count_J = 0
     
     for ide in range(Ele['Num']):
-        # 直接根据线性编号计算 (idu, idv) 保持一致顺序：idu 变化最快
-        idu = ide % Ele['NumU']
-        idv = ide // Ele['NumU']
+        # 使用 MATLAB 风格的 find(Ele.Seque == ide)
+        # 与 Pre_IGA 保持一致：在 Ele['Seque'] 中查找单元编号
+        idv, idu = np.where(Ele['Seque'] == ide + 1)
+        idv = idv[0]  # 获取第一个（唯一）匹配
+        idu = idu[0]
         Ele_Knot_U = Ele['KnotsU'][idu, :]
         Ele_Knot_V = Ele['KnotsV'][idv, :]
         Ele_NoCtPt = Ele['CtrPtsCon'][ide, :]  # 1-based 索引
@@ -77,32 +79,13 @@ def stiff_ele2d(X, penal, Emin, DH, CtrPts, Ele, GauPts, dRu, dRv):
         for i in range(Ele['GauPtsNum']):
             GptOrder = GauPts['Seque'][ide, i] - 1  # 转为 0-based 索引
             
-            # 调试信息已完全禁用
-            
-            # 提取并重排基函数导数 (相对于参数坐标)
-            # 关键一致性：dRu/dRv 的列顺序必须与 Ele_NoCtPt 的非零基函数顺序一致
-            # 我们用 GauPts['id_vals'] 映射（1-based），构建从基函数编号到列索引的查找表
-            # 优先使用与 dR 同源的列顺序（来源于 nrbbasisfunder）
-            ids_at_gp = GauPts.get('id_dR', GauPts.get('id_vals', None))
-            if ids_at_gp is not None:
-                ids_row = ids_at_gp[GptOrder, :].astype(int)  # 1-based
-                # 建立编号到列下标的映射
-                pos_map = {int(bid): idx for idx, bid in enumerate(ids_row, start=0)}
-                # 如果某个 Ele_NoCtPt 不在该高斯点的支撑中，说明顺序映射不一致；
-                # 采取保守回退：使用 ids_row 自身顺序（与 dR 列一致），并在最后一次性重排到 Ele_NoCtPt 顺序。
-                if any(int(bid) not in pos_map for bid in Ele_NoCtPt):
-                    col_idx = list(range(len(ids_row)))
-                    # 同时覆盖 Ele_CoCtPt 以匹配该顺序
-                    Ele_CoCtPt = CtrPts['Cordis'][0:2, :][:, ids_row - 1]
-                else:
-                    col_idx = [pos_map[int(bid)] for bid in Ele_NoCtPt]
-                dR_dPara = np.vstack([
-                    dRu[GptOrder, col_idx],
-                    dRv[GptOrder, col_idx]
-                ])
-            else:
-                # 回退：假设顺序已一致
-                dR_dPara = np.vstack([dRu[GptOrder, :], dRv[GptOrder, :]])
+            # MATLAB 代码：dR_dPara = [dRu(GptOrder,:); dRv(GptOrder,:)]
+            # 在 MATLAB 中，dRu 和 dRv 的行对应高斯点，列对应该点的非零基函数
+            # 列的顺序应该与 nrbbasisfunder 返回的 id 顺序一致
+            dR_dPara = np.vstack([
+                dRu[GptOrder, :],
+                dRv[GptOrder, :]
+            ])
             
             # 计算雅可比矩阵 J1: 从参数空间到物理空间
             dPhy_dPara = dR_dPara @ Ele_CoCtPt.T

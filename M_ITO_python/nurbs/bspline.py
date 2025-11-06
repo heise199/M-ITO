@@ -19,30 +19,42 @@ def findspan(n, p, u, U):
     返回:
         s: 节点跨度索引 (与 u 相同形状)
     
-    改编自 'The NURBS BOOK' pg68 Algorithm A2.1
+    改编自 'The NURBS BOOK' pg68 Algorithm A2.1 和 MATLAB NURBS Toolbox
     """
     # 记住输入是否为标量
     is_scalar = np.isscalar(u)
     u = np.atleast_1d(u)
     U = np.asarray(U)
     
-    if np.max(u) > U[-1] or np.min(u) < U[0]:
-        raise ValueError('某些值超出了节点跨度范围')
+    # 容差检查（添加小容差）
+    tol = 1e-10
+    if np.max(u) > U[-1] + tol or np.min(u) < U[0] - tol:
+        raise ValueError(f'某些参数值超出了节点跨度范围: u in [{np.min(u)}, {np.max(u)}], U in [{U[0]}, {U[-1]}]')
+    
+    # 将超出范围的值裁剪到有效范围内
+    u = np.clip(u, U[0], U[-1])
     
     s = np.zeros(u.shape, dtype=int)
+    
     for j in range(u.size):
-        # 特殊处理右边界点：u = U[n+1]（参考 NURBS BOOK Algorithm A2.1）
-        if abs(u.flat[j] - U[n+1]) < 1e-10:
-            # 对于右边界，返回 n（最后一个有效跨度）
+        uu = u.flat[j]
+        
+        # 特殊情况：参数值在右边界
+        if uu >= U[n+1]:
             s.flat[j] = n
-        else:
-            # 线性搜索找到 U[i] <= u < U[i+1]
-            s.flat[j] = p  # 默认值
-            for i in range(p, n+1):
-                if u.flat[j] >= U[i]:
-                    s.flat[j] = i
-                    if i < n and u.flat[j] < U[i+1]:
-                        break
+            continue
+        
+        # 线性搜索（更可靠，虽然慢一点）
+        # 找到满足 U[i] <= uu < U[i+1] 的 i
+        s.flat[j] = p  # 默认值
+        for i in range(p, n+1):
+            if U[i] <= uu < U[i+1]:
+                s.flat[j] = i
+                break
+            elif i == n and uu >= U[i]:
+                # 右边界情况
+                s.flat[j] = n
+                break
     
     # 如果输入是标量，返回标量；否则返回数组
     return s.item() if is_scalar else s
@@ -84,8 +96,14 @@ def basisfun(iv, uv, p, U):
             
             for r in range(j):
                 denom = right[r+1] + left[j-r]
-                if abs(denom) < 1e-14:  # 除零保护
-                    temp = 0.0
+                if abs(denom) < 1e-14:  # Division by zero protection
+                    # Special case: at knot boundaries with multiplicity
+                    # Use 0/0 = 0 convention (standard in NURBS)
+                    if abs(right[r+1]) < 1e-14 and abs(left[j-r]) < 1e-14:
+                        # Both numerator terms will be zero, keep N[r]
+                        temp = 0.0
+                    else:
+                        temp = 0.0
                 else:
                     temp = N[r] / denom
                 N[r] = saved + right[r+1] * temp
