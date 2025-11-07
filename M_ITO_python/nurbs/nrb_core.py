@@ -207,6 +207,14 @@ def nrbeval(nurbs, tt):
             w_safe = np.where(np.abs(w) < 1e-10, 1.0, w)
             p = p / w_safe.reshape(1, w_safe.shape[0], w_safe.shape[1])
             
+            # Debug output for plot_data debugging
+            debug_plot = False  # Set to True to enable debug output
+            if debug_plot:
+                print(f'[nrbeval grid] After division by w: p[0] range: [{np.min(p[0]):.3f}, {np.max(p[0]):.3f}]')
+                print(f'[nrbeval grid] p[1] range: [{np.min(p[1]):.3f}, {np.max(p[1]):.3f}]')
+                print(f'[nrbeval grid] p shape: {p.shape}, w shape: {w.shape}')
+                print(f'[nrbeval grid] w range: [{np.min(w):.6f}, {np.max(w):.6f}]')
+            
             if debug:
                 print(f'[nrbeval grid] After division by w: p[0] range: [{np.min(p[0]):.3f}, {np.max(p[0]):.3f}]')
                 print(f'[nrbeval grid] p[1] range: [{np.min(p[1]):.3f}, {np.max(p[1]):.3f}]')

@@ -50,26 +50,29 @@ def plot_topy(X, GauPts, CtrPts, DenFied, Pos, case_number=None, save_dir='resul
     
     plt.ioff()  # 关闭交互模式，不显示图像
     
-    # 从 DenFied 中获取坐标范围
-    x_min, x_max = np.min(DenFied['Ux']), np.max(DenFied['Ux'])
-    y_min, y_max = np.min(DenFied['Uy']), np.max(DenFied['Uy'])
+    # Get coordinate ranges from DenFied, handling NaN/Inf values
+    Ux_valid = DenFied['Ux'][np.isfinite(DenFied['Ux'])]
+    Uy_valid = DenFied['Uy'][np.isfinite(DenFied['Uy'])]
     
-    # 调试：检查坐标和密度范围
-    print(f'\n[Debug Plot] 坐标和密度检查:')
-    print(f'  几何坐标范围:')
-    print(f'    DenFied Ux: [{x_min:.2f}, {x_max:.2f}]')
-    print(f'    DenFied Uy: [{y_min:.2f}, {y_max:.2f}]')
-    print(f'    GauPts PCor[0]: [{np.min(GauPts["PCor"][0,:]):.2f}, {np.max(GauPts["PCor"][0,:]):.2f}]')
-    print(f'    GauPts PCor[1]: [{np.min(GauPts["PCor"][1,:]):.2f}, {np.max(GauPts["PCor"][1,:]):.2f}]')
-    print(f'    CtrPts Cordis[0]: [{np.min(CtrPts["Cordis"][0,:]):.2f}, {np.max(CtrPts["Cordis"][0,:]):.2f}]')
-    print(f'    CtrPts Cordis[1]: [{np.min(CtrPts["Cordis"][1,:]):.2f}, {np.max(CtrPts["Cordis"][1,:]):.2f}]')
-    print(f'  密度值范围:')
-    print(f'    X["CtrPts"]: [{np.min(X["CtrPts"]):.4f}, {np.max(X["CtrPts"]):.4f}], mean={np.mean(X["CtrPts"]):.4f}')
-    print(f'    X["GauPts"]: [{np.min(X["GauPts"]):.4f}, {np.max(X["GauPts"]):.4f}], mean={np.mean(X["GauPts"]):.4f}')
-    print(f'    密度>=0.5的控制点: {np.sum(X["CtrPts"] >= 0.5)}/{len(X["CtrPts"])} ({100*np.sum(X["CtrPts"] >= 0.5)/len(X["CtrPts"]):.1f}%)')
-    print(f'    密度>=0.5的高斯点: {np.sum(X["GauPts"] >= 0.5)}/{len(X["GauPts"])} ({100*np.sum(X["GauPts"] >= 0.5)/len(X["GauPts"]):.1f}%)\n')
+    if len(Ux_valid) > 0:
+        x_min, x_max = np.min(Ux_valid), np.max(Ux_valid)
+    else:
+        # Fallback to control points if DenFied has no valid values
+        x_min, x_max = np.min(CtrPts['Cordis'][0, :]), np.max(CtrPts['Cordis'][0, :])
     
-    # 图1: 控制点密度 3D 图
+    if len(Uy_valid) > 0:
+        y_min, y_max = np.min(Uy_valid), np.max(Uy_valid)
+    else:
+        # Fallback to control points if DenFied has no valid values
+        y_min, y_max = np.min(CtrPts['Cordis'][1, :]), np.max(CtrPts['Cordis'][1, :])
+    
+    # Ensure valid finite values
+    if not np.isfinite(x_min) or not np.isfinite(x_max):
+        x_min, x_max = 0.0, 1.0
+    if not np.isfinite(y_min) or not np.isfinite(y_max):
+        y_min, y_max = 0.0, 1.0
+    
+    # Figure 1: Control points density 3D plot
     fig1 = plt.figure(1, figsize=(10, 7))
     plt.clf()
     ax1 = fig1.add_subplot(111, projection='3d')
@@ -108,13 +111,24 @@ def plot_topy(X, GauPts, CtrPts, DenFied, Pos, case_number=None, save_dir='resul
     plt.close(fig2)
     
     # 计算密度分布函数 (DDF)
+    # MATLAB: X.DDF = sum(DenFied.N.*X.CtrPts(DenFied.id),2);
+    # MATLAB: X.DDF = reshape(X.DDF,numel(DenFied.U),numel(DenFied.V))';
     # 确保索引的形状正确
-    # DenFied['id'] 的形状应该是 (npts, order)
+    # DenFied['id'] 的形状应该是 (npts, order)，其中 npts = len(U) * len(V)
     # X['CtrPts'] 的形状应该是 (n_ctrpts, 1)
     idx = (DenFied['id'] - 1).astype(int)  # 转为 0-based 索引
+    
+    # 边界检查：确保索引在有效范围内
+    idx = np.clip(idx, 0, len(X['CtrPts']) - 1)
+    
     # X['CtrPts'][idx] 会得到 (npts, order, 1)，需要 squeeze 掉最后一维
     ctrpts_vals = X['CtrPts'][idx].squeeze(-1)  # 现在是 (npts, order)
+    
+    # MATLAB的sum(..., 2)是按行求和（第2维），对应Python的axis=1
     X['DDF'] = np.sum(DenFied['N'] * ctrpts_vals, axis=1)
+    
+    # MATLAB: reshape(X.DDF,numel(DenFied.U),numel(DenFied.V))'
+    # reshape成(len(U), len(V))，然后转置
     X['DDF'] = X['DDF'].reshape(len(DenFied['U']), len(DenFied['V'])).T
     
     # 图3: 密度分布函数 3D 曲面
@@ -151,10 +165,14 @@ def plot_topy(X, GauPts, CtrPts, DenFied, Pos, case_number=None, save_dir='resul
     plt.close(fig4)
     
     # 图5: 结构拓扑 (等高线图)
+    # MATLAB: contourf(DenFied.Ux, DenFied.Uy, X.DDF, [0.5 0.5], ...)
+    # MATLAB的[0.5 0.5]表示绘制密度>=0.5的区域
     fig5 = plt.figure(5, figsize=(10, 6))
     plt.clf()
-    plt.contourf(DenFied['Ux'], DenFied['Uy'], X['DDF'], levels=[0.5, 1.0], 
-                 colors=['#000080'], alpha=0.9)
+    # 使用levels=[0.5]绘制密度>=0.5的区域，或者使用levels=[0.5, 1.0]绘制0.5到1.0之间的区域
+    # 为了匹配MATLAB的行为，我们使用levels=[0.5]并设置extend='max'来填充>=0.5的区域
+    contour = plt.contourf(DenFied['Ux'], DenFied['Uy'], X['DDF'], levels=[0.5, 1.0], 
+                           colors=['#000080'], alpha=0.9, extend='both')
     plt.xlabel('X', fontsize=12)
     plt.ylabel('Y', fontsize=12)
     plt.title('Structural Topology (Contour)', fontsize=14)
@@ -166,15 +184,6 @@ def plot_topy(X, GauPts, CtrPts, DenFied, Pos, case_number=None, save_dir='resul
     
     # 清理所有图形以释放内存
     plt.close('all')
-    
-    # 不再每次迭代都打印，只在需要时打印
-    if False:  # 设为True启用打印
-        print(f'\n图像已保存到: {output_dir}/')
-        print('  - control_points_density_3d.png')
-        print('  - gauss_points_density_3d.png')
-        print('  - density_distribution_function_3d.png')
-        print('  - gauss_points_scatter.png')
-        print('  - structural_topology_contour.png')
     
     return X
 

@@ -37,30 +37,48 @@ def plot_data(Num, NURBS):
     # 计算基函数
     N_f, id_f = nrbbasisfun([Uknots, Vknots], NURBS)
     
-    # 在网格上求值 NURBS
+    # Evaluate NURBS on grid
     PCor_U, PCor_W = nrbeval(NURBS, [Uknots, Vknots])
+    # MATLAB: PCor_U = PCor_U./PCor_W;
+    # IMPORTANT: Python's nrbeval already divides by weights and returns Cartesian coordinates
+    # MATLAB's nrbeval returns homogeneous coordinates (wx, wy, wz), so MATLAB code divides by weights
+    # But Python's nrbeval implementation already does this division internally
+    # Therefore, we should NOT divide again - PCor_U is already Cartesian coordinates
     
-    # 调试：检查返回值
-    print(f'[Debug plot_data] PCor_U shape: {PCor_U.shape}')
-    print(f'[Debug plot_data] Uknots: [{Uknots[0]:.2f}, {Uknots[-1]:.2f}], len={len(Uknots)}')
-    print(f'[Debug plot_data] Vknots: [{Vknots[0]:.2f}, {Vknots[-1]:.2f}], len={len(Vknots)}')
-    print(f'[Debug plot_data] PCor_U[0] 范围: [{np.min(PCor_U[0]):.2f}, {np.max(PCor_U[0]):.2f}]')
-    print(f'[Debug plot_data] PCor_U[1] 范围: [{np.min(PCor_U[1]):.2f}, {np.max(PCor_U[1]):.2f}]')
+    # Extract X and Y coordinates
+    # MATLAB: PCor_Ux = reshape(PCor_U(1,:),numel(Uknots),numel(Vknots))';
+    # In MATLAB, when nrbeval is called with {Uknots, Vknots}, it returns PCor_U
+    # The exact shape depends on MATLAB's nrbeval implementation, but typically:
+    # PCor_U(1,:) extracts first coordinate (X) as a row vector, column-major flattened
+    # reshape(..., nt1, nt2) reshapes column-wise to (nt1, nt2), then transpose to (nt2, nt1)
+    nt1 = len(Uknots)
+    nt2 = len(Vknots)
     
-    # 提取 X 和 Y 坐标
-    PCor_Ux = PCor_U[0, :, :].T
-    PCor_Uy = PCor_U[1, :, :].T
+    if len(PCor_U.shape) == 3:
+        # PCor_U is (3, nt1, nt2) from Python nrbeval
+        # MATLAB's PCor_U(1,:) on a (3, nt1, nt2) array extracts first row, column-major: (1, nt1*nt2)
+        # We need to flatten column-wise, reshape column-wise, then transpose
+        PCor_Ux_flat = PCor_U[0, :, :].flatten(order='F')  # Column-major flatten: (nt1*nt2,)
+        PCor_Ux = PCor_Ux_flat.reshape(nt1, nt2, order='F').T  # Reshape column-wise, then transpose: (nt2, nt1)
+        
+        PCor_Uy_flat = PCor_U[1, :, :].flatten(order='F')  # Column-major flatten
+        PCor_Uy = PCor_Uy_flat.reshape(nt1, nt2, order='F').T  # Reshape column-wise, then transpose
+    else:
+        # If PCor_U is already flattened to (3, nt1*nt2)
+        PCor_U_flat = PCor_U.reshape(3, -1, order='F')
+        PCor_Ux_flat = PCor_U_flat[0, :]  # (nt1*nt2,)
+        PCor_Ux = PCor_Ux_flat.reshape(nt1, nt2, order='F').T  # Reshape column-wise then transpose
+        PCor_Uy_flat = PCor_U_flat[1, :]
+        PCor_Uy = PCor_Uy_flat.reshape(nt1, nt2, order='F').T
     
-    print(f'[Debug plot_data] PCor_Ux 范围: [{np.min(PCor_Ux):.2f}, {np.max(PCor_Ux):.2f}]')
-    print(f'[Debug plot_data] PCor_Uy 范围: [{np.min(PCor_Uy):.2f}, {np.max(PCor_Uy):.2f}]\n')
-    
-    # 存储数据
+    # Store data
     DenFied['N'] = N_f
     DenFied['id'] = id_f
     DenFied['U'] = Uknots
     DenFied['V'] = Vknots
     DenFied['Ux'] = PCor_Ux
     DenFied['Uy'] = PCor_Uy
+    
     
     return DenFied, Pos
 
